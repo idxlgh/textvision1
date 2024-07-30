@@ -1,0 +1,172 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TextVision - 이미지 텍스트 추출기</title>
+    <style>
+        :root {
+            --primary-color: #3498db;
+            --secondary-color: #2980b9;
+            --background-color: #f4f6f8;
+            --text-color: #2c3e50;
+        }
+        body {
+            font-family: 'Noto Sans KR', sans-serif;
+            background-color: var(--background-color);
+            color: var(--text-color);
+            line-height: 1.6;
+            margin: 0;
+            padding: 0;
+        }
+        .container {
+            max-width: 800px;
+            margin: 0 auto;
+            padding: 40px 20px;
+        }
+        h1 {
+            text-align: center;
+            color: var(--primary-color);
+            font-size: 2.5em;
+            margin-bottom: 30px;
+        }
+        .upload-container {
+            background-color: white;
+            border-radius: 8px;
+            padding: 30px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+        .file-input-wrapper {
+            position: relative;
+            overflow: hidden;
+            display: inline-block;
+        }
+        .file-input-wrapper input[type=file] {
+            font-size: 100px;
+            position: absolute;
+            left: 0;
+            top: 0;
+            opacity: 0;
+        }
+        .file-input-wrapper .btn {
+            display: inline-block;
+            padding: 12px 24px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        .file-input-wrapper .btn:hover {
+            background-color: var(--secondary-color);
+        }
+        #imagePreview {
+            margin-top: 20px;
+            text-align: center;
+        }
+        #imagePreview img {
+            max-width: 100%;
+            max-height: 400px;
+            border-radius: 4px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        #extractText {
+            display: block;
+            width: 100%;
+            padding: 12px;
+            margin-top: 20px;
+            background-color: var(--primary-color);
+            color: white;
+            border: none;
+            border-radius: 4px;
+            font-size: 1em;
+            cursor: pointer;
+            transition: background-color 0.3s;
+        }
+        #extractText:hover {
+            background-color: var(--secondary-color);
+        }
+        #extractedText {
+            margin-top: 30px;
+            padding: 20px;
+            background-color: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+            white-space: pre-wrap;
+            word-wrap: break-word;
+        }
+        .loading {
+            text-align: center;
+            margin-top: 20px;
+        }
+        .loading:after {
+            content: '.';
+            animation: dots 1s steps(5, end) infinite;
+        }
+        @keyframes dots {
+            0%, 20% { color: rgba(0,0,0,0); text-shadow: .25em 0 0 rgba(0,0,0,0), .5em 0 0 rgba(0,0,0,0);}
+            40% { color: var(--text-color); text-shadow: .25em 0 0 rgba(0,0,0,0), .5em 0 0 rgba(0,0,0,0); }
+            60% { text-shadow: .25em 0 0 var(--text-color), .5em 0 0 rgba(0,0,0,0); }
+            80%, 100% { text-shadow: .25em 0 0 var(--text-color), .5em 0 0 var(--text-color); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>TextVision</h1>
+        <div class="upload-container">
+            <div class="file-input-wrapper">
+                <button class="btn">이미지 선택</button>
+                <input type="file" id="imageUpload" accept="image/*">
+            </div>
+            <div id="imagePreview"></div>
+            <button id="extractText">텍스트 추출하기</button>
+        </div>
+        <div id="extractedText"></div>
+    </div>
+
+    <script src="https://unpkg.com/tesseract.js@v2.1.0/dist/tesseract.min.js"></script>
+    <script>
+        const imageUpload = document.getElementById('imageUpload');
+        const imagePreview = document.getElementById('imagePreview');
+        const extractButton = document.getElementById('extractText');
+        const extractedTextDiv = document.getElementById('extractedText');
+
+        imageUpload.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            const reader = new FileReader();
+
+            reader.onload = (event) => {
+                const img = new Image();
+                img.onload = () => {
+                    imagePreview.innerHTML = '';
+                    imagePreview.appendChild(img);
+                }
+                img.src = event.target.result;
+            }
+
+            reader.readAsDataURL(file);
+        });
+
+        extractButton.addEventListener('click', () => {
+            const img = imagePreview.querySelector('img');
+            if (!img) {
+                alert('이미지를 먼저 업로드해주세요.');
+                return;
+            }
+
+            extractedTextDiv.innerHTML = '<div class="loading">텍스트 추출 중</div>';
+
+            Tesseract.recognize(img.src, 'kor+eng')
+                .then(({ data: { text } }) => {
+                    extractedTextDiv.textContent = text || '추출된 텍스트가 없습니다.';
+                })
+                .catch((error) => {
+                    console.error('텍스트 추출 중 오류 발생:', error);
+                    extractedTextDiv.textContent = '텍스트 추출에 실패했습니다. 다시 시도해주세요.';
+                });
+        });
+    </script>
+</body>
+</html>
