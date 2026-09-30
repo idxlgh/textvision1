@@ -2002,7 +2002,8 @@
         document.addEventListener('drop', (e) => {
             if (!hasFiles(e)) return;
             e.preventDefault();
-            if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+            // 드롭 영역 안에 떨어진 파일은 드롭 영역의 처리기가 이미 추가했다.
+            if (!els.dropzone.contains(e.target) && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
         });
         document.addEventListener('paste', (e) => {
             const target = e.target;
