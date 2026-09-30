@@ -16,11 +16,11 @@
             --background-color: #f4f6f8;
             --surface-color: #ffffff;
             --text-color: #2c3e50;
-            --muted-color: #6b7c8f;
+            --muted-color: #5d6d7e;
             --border-color: #dde3ea;
             --danger-color: #c0392b;
             --danger-tint: rgba(192, 57, 43, 0.1);
-            --success-color: #1e8e5a;
+            --success-color: #177a4d;
             --warn-bg: #fff6e0;
             --warn-color: #8a5a00;
             --shadow: 0 4px 6px rgba(0, 0, 0, 0.08);
@@ -316,7 +316,7 @@
         td.num { color: var(--muted-color); white-space: nowrap; }
         td.tag { font-weight: 600; white-space: nowrap; }
         td.value { font-variant-numeric: tabular-nums; white-space: nowrap; }
-        td.desc { min-width: 14em; }
+        td.desc { min-width: 14em; overflow-wrap: anywhere; }
         td.src { max-width: 16em; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
         .badge {
             display: inline-block;
@@ -325,7 +325,7 @@
             font-size: 0.85em;
             font-weight: 700;
             background: var(--primary-tint-strong);
-            color: var(--primary-color);
+            color: var(--secondary-color);
         }
         .conf-low { color: var(--danger-color); }
         .conf-medium { color: var(--warn-color); }
@@ -342,11 +342,15 @@
         }
         .row-del:hover, .row-del:focus-visible { color: var(--danger-color); background: var(--danger-tint); }
         td.empty-state {
-            position: sticky;
-            left: 0;
             color: var(--muted-color);
             padding: 24px 12px;
             white-space: normal;
+        }
+        td.empty-state .msg {
+            display: block;
+            position: sticky;
+            left: 12px;
+            max-width: calc(100vw - 90px);
         }
         details.raw { margin-top: 16px; }
         details.raw summary { cursor: pointer; color: var(--muted-color); font-size: 0.9em; }
@@ -752,11 +756,12 @@
                 remove.disabled = state.busy;
                 remove.addEventListener('click', () => {
                     if (state.busy) return;
+                    const index = state.images.findIndex((x) => x.id === img.id);
                     URL.revokeObjectURL(img.url);
                     state.images = state.images.filter((x) => x.id !== img.id);
                     renderThumbs();
-                    const next = els.thumbs.querySelector('.remove');
-                    (next || els.dropzone).focus();
+                    const removes = els.thumbs.querySelectorAll('.remove');
+                    (removes[index] || removes[index - 1] || els.dropzone).focus();
                 });
                 wrap.append(open, name, remove);
                 return wrap;
@@ -769,12 +774,16 @@
             lightboxReturnFocus = opener || document.activeElement;
             els.lightbox.querySelector('img').src = url;
             els.lightbox.hidden = false;
+            document.querySelector('.container').inert = true;
+            document.documentElement.style.overflow = 'hidden';
             els.lightbox.querySelector('.close').focus();
         }
 
         function closeLightbox() {
             if (els.lightbox.hidden) return;
             els.lightbox.hidden = true;
+            document.querySelector('.container').inert = false;
+            document.documentElement.style.overflow = '';
             if (lightboxReturnFocus && lightboxReturnFocus.isConnected) lightboxReturnFocus.focus();
             lightboxReturnFocus = null;
         }
@@ -872,7 +881,10 @@
         }
 
         // 한 장으로 보내면 많이 줄어드는 큰 캡처는, 글자가 뭉개지지 않도록 전체 축소본 + 고해상도 타일로 나눠 보낸다.
-        async function prepareClaudeImages(img, preferJpeg) {
+        async function prepareClaudeImages(img, preferJpeg, signal) {
+            const checkAborted = () => {
+                if (signal?.aborted) throw new window.Anthropic.APIUserAbortError();
+            };
             const w = img.naturalWidth;
             const h = img.naturalHeight;
             const single = fitScale(w, h);
@@ -895,12 +907,14 @@
             const sh = Math.round(h * scale);
             // 요청 전체(최대 32MB)를 넘지 않도록 이미지 한 장당 바이트 예산을 나눈다.
             const budget = Math.min(MAX_IMAGE_BYTES, Math.floor(MAX_REQUEST_IMAGE_BYTES / (1 + plan.nx * plan.ny)));
+            checkAborted();
             const overview = drawToCanvas(img, 0, 0, w, h, w * single, h * single);
             const parts = [{ label: '전체 화면 축소본', ...(await encodeCanvas(overview, budget, preferJpeg)) }];
             const xs = tileStarts(sw, plan.tw, plan.nx);
             const ys = tileStarts(sh, plan.th, plan.ny);
             for (let r = 0; r < ys.length; r++) {
                 for (let c = 0; c < xs.length; c++) {
+                    checkAborted();
                     const tw = Math.min(plan.tw, sw - xs[c]);
                     const th = Math.min(plan.th, sh - ys[r]);
                     const canvas = drawToCanvas(img, xs[c] / scale, ys[r] / scale, tw / scale, th / scale, tw, th);
@@ -1019,7 +1033,7 @@
 
             onStage('이미지 준비 중');
             const img = await loadImage(imageEntry.file);
-            const prepared = await prepareClaudeImages(img, imageEntry.file.type === 'image/jpeg');
+            const prepared = await prepareClaudeImages(img, imageEntry.file.type === 'image/jpeg', signal);
             const { parts, tiled } = prepared;
 
             const content = [];
@@ -1093,10 +1107,10 @@
                 // 접두어는 모델 답보다 태그 글자에서 직접 정한다.
                 let prefix = resolvePrefix(tag, prefixes, loose);
                 if (!prefix) {
+                    // 두 글자 이상 코드가 읽히는데 목록에 없으면 다른 계기다 (FCV, FIT, PDT, XV ...).
                     const groups = tag.toUpperCase().match(/[A-Z]+/g) || [];
-                    const otherCode = groups.some((g) => prefixes.some((p) => g !== p && g.startsWith(p)));
-                    if (otherCode || !prefixes.includes(it.prefix)) continue; // FCV-101처럼 다른 코드
-                    prefix = it.prefix; // 태그 글자가 흐려 확인할 수 없음
+                    if (groups.some((g) => g.length >= 2) || !prefixes.includes(it.prefix)) continue;
+                    prefix = it.prefix; // 태그 글자가 흐려 코드를 확인할 수 없음
                     confidence = 'low';
                 }
                 const row = {
@@ -1125,10 +1139,27 @@
 
         // ---------- Tesseract 엔진 ----------
         let tesseractWorker = null;
+        let tesseractWorkerPromise = null;
         let tesseractProgress = () => {};
 
-        async function getTesseractWorker() {
-            if (tesseractWorker) return tesseractWorker;
+        // 만드는 중인 워커도 기억해 둔다. 준비 도중 중지했다가 다시 시작해도 워커를 두 개 만들지 않는다.
+        function getTesseractWorker() {
+            if (!tesseractWorkerPromise) {
+                const pending = createTesseractWorker();
+                tesseractWorkerPromise = pending;
+                pending.catch(() => { if (tesseractWorkerPromise === pending) tesseractWorkerPromise = null; });
+            }
+            return tesseractWorkerPromise;
+        }
+
+        function discardTesseractWorker() {
+            const worker = tesseractWorker;
+            tesseractWorker = null;
+            tesseractWorkerPromise = null;
+            if (worker) worker.terminate().catch(() => {});
+        }
+
+        async function createTesseractWorker() {
             await loadScript(TESSERACT_SRC, TESSERACT_SRI);
             // 언어 데이터 다운로드가 실패하면 createWorker가 끝나지 않으므로 errorHandler로 끊는다.
             let failInit;
@@ -1277,8 +1308,8 @@
         const UNIT_RE = /^(%|℃|°C|°F|mbar|[Bb]ar[ga]?|BAR[GA]?|[kK][Pp][Aa][GgAa]?|[Mm][Pp][Aa][GgAa]?|Pa|kgf?\/cm[2²][Gg]?|㎏\/㎠|mmH2O|mmAq|mm|cm|N?m[3³]\/hr?|N?M3\/HR?|㎥\/hr?|t\/h|kg\/h|[Ll]\/min|[Ll]\/[hs]|m\/s|mA|m|kA|A|kV|V|kW|MW|rpm|RPM|Hz|ppm|pH|NTU|[uµ]S\/cm|mS\/cm)(?![A-Za-z0-9²³/])/;
         // OCR이 ℃를 읽는 여러 모양: °C ºC ˚C *C 'C oC
         const CELSIUS_RE = /^(?:[°º˚*'"]\s?[Cc]|oC)(?![A-Za-z0-9])/;
-        // 식별자(FCV-101, P-3001, #2)·시각(11:45)·한글 수량사(1호기, 2번)에 붙은 숫자는 값이 아니다.
-        const NUMBER_RE = /(?<![A-Za-z0-9.,#:]|[A-Za-z0-9][-_/])[-+−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![0-9:]|[.,]\d|[-_/]\d|[ ]?(?:호|번|차|층|계열))/g;
+        // 식별자(FCV-101, P-3001, #2)·시각(11:45)·한글 수량사(1호기, 2번)에 붙은 숫자는 값이 아니다. 'PV:45.2'의 45.2는 값이다.
+        const NUMBER_RE = /(?<![A-Za-z0-9.,#]|\d:|[A-Za-z0-9][-_/])[-+−]?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?(?![0-9:]|[.,]\d|[-_/]\d|[ ]?(?:호|번|차|층|계열))/g;
         const STATUS_RE = /^(HHH|HH|H|LLL|LL|L|HI|LO|HIHI|LOLO|ALM|ALARM|RUN|STOP|OPEN|CLOSE|CLOSED|AUTO|MAN|CAS|PV|SP|OUT|MV|TRIP|FAULT)$/;
         const DASHES = '-_–—‐−';
 
@@ -1559,8 +1590,8 @@
                 ({ data } = await Promise.race([worker.recognize(canvas, {}, { text: true, blocks: true }), aborted]));
             } catch (err) {
                 // 작업이 실패하거나 중지된 워커는 다시 쓰지 않는다.
-                if (tesseractWorker === worker) tesseractWorker = null;
-                worker.terminate().catch(() => {});
+                if (tesseractWorker === worker) discardTesseractWorker();
+                else worker.terminate().catch(() => {});
                 throw err;
             }
             const rows = extractTagsFromOcr(collectLines(data), prefixes, loose);
@@ -1569,13 +1600,16 @@
 
         // ---------- 추출 실행 ----------
         function setBusy(busy) {
+            const hadStopFocus = document.activeElement === els.stopBtn;
             state.busy = busy;
             els.extractBtn.hidden = busy;
             els.stopBtn.hidden = !busy;
             els.stopBtn.disabled = false;
-            renderThumbs();
-            if (!busy && document.activeElement === document.body) els.extractBtn.focus();
-            if (busy) els.stopBtn.focus();
+            // 썸네일을 다시 그리지 않고 상태만 바꾼다 (다시 그리면 썸네일의 포커스가 사라진다).
+            els.thumbs.querySelectorAll('.remove').forEach((b) => { b.disabled = busy; });
+            els.extractBtn.disabled = busy || state.images.length === 0;
+            if (busy) els.stopBtn.focus({ preventScroll: true });
+            else if (hadStopFocus || document.activeElement === document.body) els.extractBtn.focus({ preventScroll: true });
         }
 
         async function runExtraction() {
@@ -1597,7 +1631,14 @@
             // 도중에 설정을 바꿔도 이번 작업에는 영향이 없도록 시작할 때 값을 고정한다.
             const loose = els.loose.checked;
             const claudeOpts = { apiKey: els.apiKey.value.trim(), model: els.model.value, effort: els.effort.value };
-            const images = [...state.images];
+            // 아직 추출하지 않은 이미지만 보낸다. 모두 추출했다면 다시 추출할지 묻는다(고친 내용이 바뀌므로).
+            const extracted = new Set(state.rawTexts.map((r) => r.sourceId));
+            let images = state.images.filter((im) => !extracted.has(im.id));
+            if (!images.length) {
+                if (state.rows.some((r) => extracted.has(r.sourceId))
+                    && !confirm('이미 추출한 이미지를 다시 추출합니다. 이 이미지들의 기존 결과(직접 고친 내용 포함)는 새 결과로 바뀝니다. 계속할까요?')) return;
+                images = [...state.images];
+            }
             const controller = new AbortController();
             state.cancel = () => {
                 els.stopBtn.disabled = true;
@@ -1687,21 +1728,32 @@
             const select = (key) => {
                 state.filter = key === '' || state.filter === key ? null : key;
                 renderResults();
-                els.chips.querySelector(`[data-prefix="${key}"]`)?.focus();
+                const target = els.chips.querySelector(`[data-prefix="${key}"]`);
+                (target && !target.disabled ? target : els.chips.querySelector('[data-prefix=""]'))?.focus();
             };
-            els.chips.replaceChildren(
-                makeChip('전체', '', state.rows.length, state.filter === null, select),
-                ...chipPrefixes.map((p) => {
-                    const n = counts.get(p) || 0;
-                    const active = state.filter === p;
-                    const chip = makeChip(p, p, n, active, select);
-                    chip.disabled = n === 0 && !active;
-                    return chip;
-                }),
-            );
+            // 버튼을 새로 만들지 않고 고쳐 쓴다. 새로 만들면 방금 누르려던 버튼이나 포커스가 사라진다.
+            const old = new Map([...els.chips.children].map((c) => [c.dataset.prefix, c]));
+            const keys = ['', ...chipPrefixes];
+            old.forEach((chip, key) => { if (!keys.includes(key)) chip.remove(); });
+            keys.forEach((key, i) => {
+                const n = key === '' ? state.rows.length : counts.get(key) || 0;
+                const active = key === '' ? state.filter === null : state.filter === key;
+                const chip = old.get(key) || makeChip(key || '전체', key, n, active, select);
+                chip.classList.toggle('active', active);
+                chip.setAttribute('aria-pressed', String(active));
+                chip.querySelector('.count').textContent = String(n);
+                chip.disabled = key !== '' && n === 0 && !active;
+                if (els.chips.children[i] !== chip) els.chips.insertBefore(chip, els.chips.children[i] || null);
+            });
         }
 
         function renderResults() {
+            // 편집 중인 칸이 있으면 먼저 반영하고, 다시 그린 뒤 같은 칸으로 돌아간다.
+            const editing = document.activeElement;
+            const editKey = editing && editing.isContentEditable && els.body.contains(editing)
+                ? `td[data-row-id="${editing.dataset.rowId}"][data-field="${editing.dataset.field}"]`
+                : null;
+            if (editKey) editing.blur();
             const hasAny = state.rows.length > 0 || state.rawTexts.length > 0;
             els.resultsCard.hidden = !hasAny;
             if (!hasAny) return;
@@ -1714,7 +1766,10 @@
                 const td = document.createElement('td');
                 td.colSpan = 10;
                 td.className = 'empty-state';
-                td.textContent = '표시할 태그가 없습니다. 접두어 설정을 확인하거나 "행 추가"로 직접 입력하세요.';
+                const msg = document.createElement('span');
+                msg.className = 'msg';
+                msg.textContent = '표시할 태그가 없습니다. 접두어 설정을 확인하거나 "행 추가"로 직접 입력하세요.';
+                td.appendChild(msg);
                 tr.appendChild(td);
                 els.body.replaceChildren(tr);
             } else {
@@ -1725,6 +1780,14 @@
                 .map((r) => (state.rawTexts.length > 1 ? `── ${r.source} ──\n${r.text}` : r.text))
                 .join('\n\n') || '(인식된 원문 없음)';
             els.exportBtn.disabled = state.rows.length === 0;
+
+            const back = editKey && els.body.querySelector(editKey);
+            if (back) {
+                back.focus();
+                const sel = getSelection();
+                sel.selectAllChildren(back);
+                sel.collapseToEnd();
+            }
         }
 
         function makeChip(label, key, count, active, onSelect) {
@@ -1774,6 +1837,7 @@
                     if (text === row[field]) return;
                     row[field] = text;
                     if (field === 'tag') {
+                        del.setAttribute('aria-label', `${text || '빈'} 행 삭제`);
                         const p = resolvePrefix(text, getPrefixes(), els.loose.checked);
                         if (p && p !== row.prefix) {
                             row.prefix = p;
@@ -1803,8 +1867,14 @@
             del.setAttribute('aria-label', `${row.tag || '빈'} 행 삭제`);
             del.addEventListener('click', () => {
                 const index = [...els.body.querySelectorAll('.row-del')].indexOf(del);
+                const filterBefore = state.filter;
                 state.rows = state.rows.filter((r) => r.id !== row.id);
                 renderResults();
+                // 필터의 마지막 행을 지워 전체 보기로 바뀌면, 엉뚱한 행의 삭제 버튼이 아니라 필터 버튼으로 간다.
+                if (state.filter !== filterBefore) {
+                    els.chips.querySelector('.chip.active')?.focus();
+                    return;
+                }
                 const dels = els.body.querySelectorAll('.row-del');
                 (dels[index] || dels[index - 1] || els.addRowBtn).focus();
             });
@@ -1837,10 +1907,10 @@
         }
 
         // 숫자로 읽을 수 있는 값은 숫자 셀로 저장해 엑셀에서 바로 계산할 수 있게 한다.
-        // 앞자리 0('007'), '+' 부호, 15자리를 넘는 숫자는 모양이 바뀌므로 글자 그대로 둔다.
+        // 앞자리 0('007', 쉼표 소수 '0,500'), '+' 부호, 15자리를 넘는 숫자는 모양이 바뀌므로 글자 그대로 둔다.
         function toCellValue(value) {
             const s = String(value).trim();
-            if (/^[-+]?0\d/.test(s) || s.startsWith('+') || s.replace(/[^0-9]/g, '').replace(/^0+/, '').length > 15) return s;
+            if (/^[-+]?0[\d,]/.test(s) || s.startsWith('+') || s.replace(/[^0-9]/g, '').replace(/^0+/, '').length > 15) return s;
             if (/^-?(?:\d{1,3}(?:,\d{3})+|\d+)(?:\.\d+)?$/.test(s)) {
                 const n = Number(s.replace(/,/g, ''));
                 if (Number.isFinite(n)) return n;
@@ -1976,7 +2046,7 @@
         // ---------- 이벤트 ----------
         els.engineRadios.forEach((r) => r.addEventListener('change', () => { updateEngineUI(); saveSettings(); }));
         [els.model, els.effort, els.loose].forEach((el) => el.addEventListener('change', saveSettings));
-        els.prefixes.addEventListener('change', () => { saveSettings(); renderResults(); });
+        els.prefixes.addEventListener('change', () => { saveSettings(); if (!els.resultsCard.hidden) renderChips(); });
         els.rememberKey.addEventListener('change', saveSettings);
         els.apiKey.addEventListener('change', saveSettings);
 
@@ -1996,14 +2066,13 @@
             e.preventDefault();
             els.dropzone.classList.remove('dragover');
         }));
-        // 드롭 영역 밖에 파일을 떨어뜨려도 브라우저가 그 파일을 열며 결과를 날리지 않게 하고, 그대로 추가한다.
+        // 파일 드롭은 문서 전체에서 한 곳으로 처리한다. 드롭 영역 밖에 떨어뜨려도 브라우저가 파일을 열며 결과를 날리지 않는다.
         const hasFiles = (e) => [...(e.dataTransfer?.types || [])].includes('Files');
         document.addEventListener('dragover', (e) => { if (hasFiles(e)) e.preventDefault(); });
         document.addEventListener('drop', (e) => {
             if (!hasFiles(e)) return;
             e.preventDefault();
-            // 드롭 영역 안에 떨어진 파일은 드롭 영역의 처리기가 이미 추가했다.
-            if (!els.dropzone.contains(e.target) && e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
+            if (e.dataTransfer.files.length) addFiles(e.dataTransfer.files);
         });
         document.addEventListener('paste', (e) => {
             const target = e.target;
@@ -2030,6 +2099,7 @@
                 els.usageMeta.textContent = '';
                 renderResults();
                 setStatus('');
+                (els.extractBtn.disabled ? els.dropzone : els.extractBtn).focus();
             }
         });
         els.lightbox.addEventListener('click', closeLightbox);
@@ -2043,10 +2113,7 @@
                 e.returnValue = '';
             }
         });
-        window.addEventListener('pagehide', () => {
-            if (tesseractWorker) tesseractWorker.terminate();
-            tesseractWorker = null;
-        });
+        window.addEventListener('pagehide', discardTesseractWorker);
 
         loadSettings();
         renderThumbs();
